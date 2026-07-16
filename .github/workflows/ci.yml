@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install core dependencies
+        # Install the light scientific stack + pytest. Evidently is intentionally
+        # optional: the native drift core and the whole test suite run without it.
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scipy scikit-learn joblib PyYAML pytest pytest-cov
+
+      - name: Run test suite
+        run: PYTHONPATH=src pytest -q --cov=src/ml_drift --cov-report=term-missing
+
+      - name: Smoke-test the quickstart
+        run: python examples/quickstart.py
+
+  evidently-reports:
+    # Separate job proving the Evidently integration produces reports end-to-end.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install full stack (with Evidently)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run pipeline and generate Evidently reports
+        run: python scripts/run_pipeline.py --scenario severe
+      - name: Upload reports as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidently-reports
+          path: artifacts/reports/*.html
+          if-no-files-found: warn
