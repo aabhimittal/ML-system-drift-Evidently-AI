@@ -1,0 +1,61 @@
+# =============================================================================
+# ML System Drift + Post-Detection Optimization — central configuration
+# Every module reads from this file via src/ml_drift/config.py.
+# Tune thresholds here to change detection sensitivity and remediation policy.
+# =============================================================================
+
+project:
+  name: ml-drift-evidently
+  random_seed: 42
+
+paths:
+  data_dir: data
+  reference_data: data/reference.csv
+  current_data: data/current.csv
+  artifacts_dir: artifacts
+  model_dir: artifacts/models
+  reports_dir: artifacts/reports
+  metrics_dir: artifacts/metrics
+
+data:
+  n_samples: 6000            # rows per generated batch
+  drift_intensity: 0.0       # 0.0 = no drift; used when generating the reference set
+  # Names are informative only; the generator produces these columns.
+  numeric_features: [amount, tenure, latency, score, balance, age]
+  categorical_features: [region, channel, device]
+  target: target             # binary classification target (0/1)
+
+model:
+  type: random_forest        # random_forest | gradient_boosting | logistic_regression
+  test_size: 0.25
+  params:
+    n_estimators: 200
+    max_depth: 12
+    min_samples_leaf: 5
+
+drift:
+  # --- per-feature detection thresholds ---
+  psi_threshold: 0.2         # PSI > 0.2  => feature considered drifted (moderate/major shift)
+  ks_pvalue_threshold: 0.05  # KS test p-value < 0.05 => numeric feature drifted
+  chi2_pvalue_threshold: 0.05 # Chi-square p-value < 0.05 => categorical feature drifted
+  # --- dataset-level decision ---
+  dataset_drift_share: 0.5   # if >= this share of features drift => dataset drift = True
+  target_drift_threshold: 0.1 # PSI on target/prediction distribution
+
+optimization:
+  # Post-detection remediation policy. The optimizer inspects drift + live
+  # performance and selects a strategy automatically when strategy == auto.
+  strategy: auto             # auto | retrain | reweight | feature_stabilize | none
+  min_drift_share_to_retrain: 0.35  # drifted-feature share that triggers retraining
+  performance_drop_to_retrain: 0.03 # absolute ROC-AUC/accuracy drop that triggers retraining
+  retrain_window: rolling    # rolling (recent window only) | append (reference + current)
+  rolling_window_size: 6000  # rows kept when retrain_window == rolling
+  recent_sample_weight: 3.0  # up-weight factor for current data in reweight strategy
+  psi_drop_feature_threshold: 0.5  # features with PSI above this are flagged unstable
+  champion_challenger: true  # only promote a retrained model if it beats the champion
+  min_improvement: 0.0       # required metric gain for challenger to be promoted
+  max_retrain_rounds: 3
+
+monitoring:
+  primary_metric: roc_auc    # roc_auc | accuracy | f1
+  history_file: artifacts/metrics/monitoring_history.json
