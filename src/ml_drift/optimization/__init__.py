@@ -14,6 +14,11 @@ from .strategies import (
     decide_strategy,
 )
 from .retrainer import RetrainResult, build_training_frame, retrain
+from .policy import (
+    PromotionVerdict,
+    expected_value_of_retraining,
+    should_promote,
+)
 from .optimizer import OptimizationOutcome, optimize_after_detection
 
 __all__ = [
@@ -23,6 +28,9 @@ __all__ = [
     "RetrainResult",
     "build_training_frame",
     "retrain",
+    "PromotionVerdict",
+    "expected_value_of_retraining",
+    "should_promote",
     "OptimizationOutcome",
     "optimize_after_detection",
 ]

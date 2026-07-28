@@ -14,6 +14,7 @@ help:
 	@echo "  detect     Run drift detection + Evidently reports"
 	@echo "  optimize   Run post-detection optimization (remediation)"
 	@echo "  pipeline   Run the full end-to-end pipeline"
+	@echo "  advanced   Demo the advanced features (schema, impact, pred-drift, cost gate)"
 	@echo "  monitor    Append current run metrics to monitoring history"
 	@echo "  app        Launch the Streamlit dashboard"
 	@echo "  test       Run the pytest suite"
@@ -36,6 +37,9 @@ optimize:
 
 pipeline:
 	$(PYTHON) scripts/run_pipeline.py
+
+advanced:
+	$(PYTHON) examples/advanced_features.py
 
 monitor:
 	$(PYTHON) scripts/run_pipeline.py --log-monitoring

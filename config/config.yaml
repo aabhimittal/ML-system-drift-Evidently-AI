@@ -41,6 +41,9 @@ drift:
   # --- dataset-level decision ---
   dataset_drift_share: 0.5   # if >= this share of features drift => dataset drift = True
   target_drift_threshold: 0.1 # PSI on target/prediction distribution
+  # --- multiple-testing correction (recommended with many features) ---
+  correction: none           # none | bh (Benjamini-Hochberg false-discovery-rate control)
+  fdr_alpha: 0.05            # target false-discovery rate when correction == bh
 
 optimization:
   # Post-detection remediation policy. The optimizer inspects drift + live
@@ -55,6 +58,20 @@ optimization:
   champion_challenger: true  # only promote a retrained model if it beats the champion
   min_improvement: 0.0       # required metric gain for challenger to be promoted
   max_retrain_rounds: 3
+  # --- cost/value-aware economic gate (optional) ---
+  # If value_per_metric_point is set, the challenger is promoted only when the
+  # expected value of its improvement exceeds retrain_cost. Leave null to disable.
+  value_per_metric_point: null  # business value of a full 1.0 gain in primary_metric
+  retrain_cost: 0.0             # fixed cost (compute + review + deploy) of one retrain
+
+advanced:
+  # Production-oriented analytics surfaced by the pipeline (all optional).
+  enable_schema_validation: true   # data-contract check (missing/extra cols, dtype, nulls, ranges)
+  enable_impact_weighting: true    # rank drift by PSI x model feature importance
+  enable_prediction_drift: true    # unsupervised early warning on the score distribution
+  prediction_psi_threshold: 0.2
+  segment_column: region           # per-segment drift; null to disable
+  min_segment_size: 100
 
 monitoring:
   primary_metric: roc_auc    # roc_auc | accuracy | f1
