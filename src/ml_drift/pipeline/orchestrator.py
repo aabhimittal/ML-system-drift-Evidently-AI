@@ -28,8 +28,15 @@ from ..config import Config, load_config
 from ..data.generate import DriftSpec, generate_dataset
 from ..data.loader import load_frame, save_frame
 from ..drift.detector import DriftResult, detect_dataset_drift
+from ..drift.advanced import (
+    detect_prediction_drift,
+    impact_weighted_drift,
+    model_feature_importances,
+    segmented_drift,
+)
+from ..drift.schema import validate_batch
 from ..drift.reports import EVIDENTLY_AVAILABLE, generate_all_reports
-from ..models.predict import score_frame
+from ..models.predict import predict_proba, score_frame
 from ..models.train import ModelBundle, save_model, train_model
 from ..monitoring.dashboard import append_history
 from ..optimization.optimizer import OptimizationOutcome, optimize_after_detection
@@ -49,6 +56,7 @@ class PipelineResult:
     champion_before: Dict[str, float]
     reports: Dict[str, Optional[str]] = field(default_factory=dict)
     paths: Dict[str, str] = field(default_factory=dict)
+    analytics: Dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> Dict[str, Any]:
         return {
@@ -56,6 +64,7 @@ class PipelineResult:
             "optimization": self.optimization.summary(),
             "champion_before": {k: round(v, 4) for k, v in self.champion_before.items()},
             "reports": self.reports,
+            "analytics": self.analytics,
             "evidently_available": EVIDENTLY_AVAILABLE,
         }
 
@@ -125,7 +134,40 @@ def run_pipeline(
         chi2_pvalue_threshold=dcfg["chi2_pvalue_threshold"],
         psi_threshold=dcfg["psi_threshold"],
         dataset_drift_share=dcfg["dataset_drift_share"],
+        correction=dcfg.get("correction", "none"),
+        fdr_alpha=dcfg.get("fdr_alpha", 0.05),
     )
+
+    # 4b. Advanced analytics (schema, impact-weighting, prediction & segment) -
+    acfg = cfg.get("advanced", {}) or {}
+    analytics: Dict[str, Any] = {}
+    if acfg.get("enable_schema_validation", True):
+        analytics["schema"] = validate_batch(
+            reference, current, ignore=[target, "prediction", "prediction_proba"]
+        ).as_dict()
+    if acfg.get("enable_impact_weighting", True):
+        try:
+            importances = model_feature_importances(champion)
+            analytics["impact_weighted_drift"] = impact_weighted_drift(
+                drift, importances
+            ).as_dict()
+        except Exception:  # pragma: no cover - never let analytics break the run
+            pass
+    if acfg.get("enable_prediction_drift", True):
+        ref_scores = predict_proba(champion, reference)
+        cur_scores = predict_proba(champion, current)
+        analytics["prediction_drift"] = detect_prediction_drift(
+            ref_scores, cur_scores,
+            psi_threshold=acfg.get("prediction_psi_threshold", dcfg["psi_threshold"]),
+        ).as_dict()
+    seg_col = acfg.get("segment_column")
+    if seg_col and seg_col in reference.columns and seg_col in current.columns:
+        analytics["segmented_drift"] = segmented_drift(
+            reference, current, seg_col,
+            min_segment_size=acfg.get("min_segment_size", 100),
+            psi_threshold=dcfg["psi_threshold"],
+            dataset_drift_share=dcfg["dataset_drift_share"],
+        ).as_dict()
 
     # 5. Evidently reports (optional) --------------------------------------
     reports: Dict[str, Optional[str]] = {}
@@ -160,6 +202,8 @@ def run_pipeline(
         recent_sample_weight=ocfg["recent_sample_weight"],
         champion_challenger=ocfg["champion_challenger"],
         min_improvement=ocfg["min_improvement"],
+        value_per_metric_point=ocfg.get("value_per_metric_point"),
+        retrain_cost=ocfg.get("retrain_cost", 0.0),
         seed=seed,
     )
 
@@ -177,6 +221,7 @@ def run_pipeline(
         champion_before=champion_before,
         reports=reports,
         paths=paths,
+        analytics=analytics,
     )
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     with open(metrics_path, "w", encoding="utf-8") as fh:
@@ -215,6 +260,28 @@ def _print_summary(result: PipelineResult) -> None:
     print(f"  {o['primary_metric']:<13}: champion={o['champion_metric']} "
           f"challenger={o['challenger_metric']}  (Δ={o['improvement']})")
     print(f"  decision      : {'PROMOTED challenger' if o['promoted'] else 'kept champion'}")
+
+    a = s.get("analytics", {})
+    if a:
+        print("\n=== ADVANCED ANALYTICS ===")
+        if "schema" in a:
+            sc = a["schema"]
+            print(f"  schema        : ok={sc['ok']} "
+                  f"(errors={sc['n_errors']}, warnings={sc['n_warnings']})")
+        if "impact_weighted_drift" in a:
+            iwd = a["impact_weighted_drift"]
+            print(f"  impact drift  : total={iwd['total_impact']} "
+                  f"top_feature={iwd['top_feature']}")
+        if "prediction_drift" in a:
+            pdd = a["prediction_drift"]
+            print(f"  pred. drift   : drifted={pdd['drifted']} "
+                  f"(psi={pdd['psi']}, js={pdd['js_divergence']}, "
+                  f"mean_shift={pdd['mean_shift']})  [unsupervised]")
+        if "segmented_drift" in a and a["segmented_drift"].get("worst_segment"):
+            ws = a["segmented_drift"]["worst_segment"]
+            print(f"  worst segment : {a['segmented_drift']['segment_column']}={ws[0]} "
+                  f"(share={ws[1]})")
+
     print(f"\n  Evidently reports: {'generated' if s['evidently_available'] else 'skipped (evidently not installed)'}")
     for name, path in s["reports"].items():
         if path:

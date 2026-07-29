@@ -146,20 +146,40 @@ ML-system-drift-Evidently-AI/
 │   │                loader.py
 │   ├── models/      train.py       # ModelBundle: pipeline + metrics + persistence
 │   │                predict.py     # score frames for Evidently
-│   ├── drift/       detector.py    # native KS / PSI / Chi² core (no deps)
+│   ├── drift/       detector.py    # native KS / PSI / Chi² core (no deps) + edge-case hardening
+│   │                stats.py       # JS divergence, normalized Wasserstein, Benjamini-Hochberg FDR
+│   │                advanced.py    # impact-weighted / prediction / segmented drift
+│   │                schema.py      # data-contract validation (schema breaks)
 │   │                reports.py     # Evidently AI report suite (optional)
 │   ├── optimization/strategies.py  # policy: which remediation to apply
 │   │                retrainer.py   # mechanics: build training set + retrain
+│   │                policy.py      # cost/value-aware promotion gate
 │   │                optimizer.py   # orchestration + champion/challenger gate
 │   ├── monitoring/  dashboard.py   # history logging + trend plot
 │   └── pipeline/    orchestrator.py# end-to-end run + CLI (`main`)
 ├── scripts/                        # generate_data · train_baseline · detect_drift · optimize · run_pipeline
 ├── app/streamlit_app.py            # interactive dashboard
-├── examples/quickstart.py          # ~20-line self-contained demo
-├── tests/                          # 28 pytest tests (run offline, no Evidently needed)
-├── docs/                           # step-by-step guides (01–07 + architecture)
+├── examples/                       # quickstart.py + advanced_features.py demos
+├── tests/                          # 75 pytest tests (run offline, no Evidently needed)
+├── docs/                           # step-by-step guides (01–09 + architecture)
 └── .github/workflows/ci.yml        # CI: tests + Evidently report artifacts
 ```
+
+## Advanced / production-oriented features
+
+Beyond the core detect→remediate loop, the system includes features aimed at real industrial deployments (see [docs/08](docs/08-advanced-features.md)):
+
+| Feature | Module | Why it matters |
+|---------|--------|----------------|
+| **Data-contract validation** | `drift/schema.py` | Catches hard schema breaks (missing/renamed columns, dtype changes, null spikes, out-of-range values, unseen categories) *before* statistical drift — the #1 cause of production incidents. |
+| **Impact-weighted drift** | `drift/advanced.py` | Ranks drift by `PSI × model feature-importance`, so a big shift in an ignored feature ranks below a small shift in a pivotal one. |
+| **Unsupervised prediction drift** | `drift/advanced.py` | Watches the model's own score distribution as an early-warning signal when labels are delayed/missing. Uses **effect size**, not p-values, to avoid the "everything is significant at large n" trap. |
+| **Segmented drift** | `drift/advanced.py` | Runs detection per slice (e.g. per region) so a severe pocket isn't masked by a calm average. |
+| **JS divergence + normalized Wasserstein** | `drift/stats.py` | Bounded, scale-free distances that complement PSI/KS. |
+| **Benjamini–Hochberg FDR correction** | `drift/stats.py` | Controls false drift alarms when testing hundreds of features (`drift.correction: bh`). |
+| **Cost/value-aware remediation gate** | `optimization/policy.py` | Promotes a challenger only when the expected value of its improvement exceeds the retraining cost. |
+
+These surface automatically in the pipeline under `=== ADVANCED ANALYTICS ===` and in the run JSON's `analytics` block; toggle them in the config `advanced:` section. Run `make advanced` (or `python examples/advanced_features.py`) for a live demo.
 
 ## Configuration
 
@@ -181,8 +201,11 @@ you will actually tune:
 make test          # or: PYTHONPATH=src pytest -q
 ```
 
-The suite (28 tests) covers data generation, the native drift metrics, model
-training/persistence, every remediation strategy, the champion/challenger gate,
+The suite (75 tests) covers data generation, the native drift metrics, model
+training/persistence, every remediation strategy, the champion/challenger and
+cost-aware gates, the advanced analytics (schema, impact-weighting, prediction &
+segmented drift), a dedicated **industrial edge-case matrix** (empty/constant/
+all-NaN columns, schema mismatch, unseen categories, infinities, dtype coercion),
 and full-pipeline smoke tests. It runs **without Evidently installed**.
 
 ## Documentation index
@@ -196,6 +219,8 @@ and full-pipeline smoke tests. It runs **without Evidently installed**.
 | [docs/05-optimization-remediation.md](docs/05-optimization-remediation.md) | Strategies, retraining, champion/challenger |
 | [docs/06-monitoring-dashboard.md](docs/06-monitoring-dashboard.md) | History logging, Streamlit app |
 | [docs/07-cicd-and-deployment.md](docs/07-cicd-and-deployment.md) | CI, scheduling, productionisation |
+| [docs/08-advanced-features.md](docs/08-advanced-features.md) | Schema contracts, impact-weighted drift, prediction drift, FDR, cost gate |
+| [docs/09-industrial-edge-cases.md](docs/09-industrial-edge-cases.md) | Robustness to pathological batches + the edge-case test matrix |
 | [docs/architecture.md](docs/architecture.md) | Component diagram + data flow |
 
 ## License

@@ -26,6 +26,7 @@ from sklearn.model_selection import train_test_split
 
 from ..drift.detector import DriftResult
 from ..models.train import ModelBundle, evaluate
+from .policy import should_promote
 from .retrainer import retrain
 from .strategies import RemediationDecision, Strategy, decide_strategy
 
@@ -84,10 +85,16 @@ def optimize_after_detection(
     min_improvement: float = 0.0,
     eval_fraction: float = 0.3,
     seed: int = 42,
+    value_per_metric_point: Optional[float] = None,
+    retrain_cost: float = 0.0,
 ) -> OptimizationOutcome:
     """Run the full remediation cycle and return the outcome.
 
     ``current`` must contain the ``target`` column (freshly-arrived ground truth).
+
+    If ``value_per_metric_point`` is provided, an **economic gate** is applied on
+    top of the quality gate: the challenger is promoted only if the expected value
+    of its improvement exceeds ``retrain_cost`` (see :mod:`optimization.policy`).
     """
     # 1. Hold out an evaluation slice of the current data (never trained on).
     stratify = current[target] if current[target].nunique() > 1 else None
@@ -147,17 +154,27 @@ def optimize_after_detection(
     challenger_metric = _metric(challenger, x_eval, y_eval, primary_metric)
     improvement = float(challenger_metric - champion_metric)
 
-    # 7. Champion/challenger gate.
-    if champion_challenger:
-        promoted = improvement >= min_improvement and improvement > 0
-    else:
-        promoted = True  # always adopt the retrained model
+    # 7. Champion/challenger gate (quality + optional economic gate).
+    verdict = should_promote(
+        champion_metric,
+        challenger_metric,
+        min_improvement=min_improvement,
+        champion_challenger=champion_challenger,
+        value_per_metric_point=value_per_metric_point,
+        retrain_cost=retrain_cost,
+    )
+    promoted = verdict.promote
 
     best = challenger if promoted else champion
-    notes = (
-        f"{retrain_result.notes}; "
-        + ("challenger promoted" if promoted else "challenger rejected, champion kept")
-    )
+    notes = f"{retrain_result.notes}; {verdict.reason}"
+    details = {
+        "performance_drop": round(performance_drop, 4),
+        "n_train_rows": retrain_result.n_train_rows,
+        "dropped_features": retrain_result.dropped_features,
+        "eval_rows": int(len(eval_df)),
+    }
+    if verdict.expected_value is not None:
+        details["expected_value"] = round(verdict.expected_value, 4)
     return OptimizationOutcome(
         decision=decision,
         champion_metric=champion_metric,
@@ -167,10 +184,5 @@ def optimize_after_detection(
         best_bundle=best,
         improvement=improvement,
         notes=notes,
-        details={
-            "performance_drop": round(performance_drop, 4),
-            "n_train_rows": retrain_result.n_train_rows,
-            "dropped_features": retrain_result.dropped_features,
-            "eval_rows": int(len(eval_df)),
-        },
+        details=details,
     )
